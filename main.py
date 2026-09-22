@@ -55,7 +55,7 @@ def fetch_music_audio(song_query):
     try:
         res = requests.get(search_url).json()
         if res.get('data') and len(res['data']) > 0:
-            track = res['data']
+            track = res['data'][0]
             title = track.get('title', 'Unknown Title')
             artist = track.get('artist', {}).get('name', 'Unknown Artist')
             audio_url = track.get('preview')
@@ -85,7 +85,7 @@ def whatsapp_webhook():
     type_webhook = data.get('typeWebhook', '')
     
     sender_data = data.get('senderData', {})
-    chat_id = data.get('chatId') or sender_data.get('chatId')
+    chat_id = data.get('chatId') or sender_data.get('chatId') or data.get('chatId')
     
     message_data = data.get('messageData', {})
     text_data = message_data.get('textMessageData', {}) or message_data.get('extendedTextMessageData', {})
