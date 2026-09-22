@@ -23,20 +23,20 @@ def ask_ai(question):
     API_URL = "https://huggingface.co"
     headers = {"Authorization": f"Bearer {HF_TOKEN}"}
     payload = {"inputs": f"<|user|>\n{question}\n<|assistant|>\n", "parameters": {"max_new_tokens": 250}}
-    response = requests.post(API_URL, headers=headers, json=payload)
-    if response.status_code == 200:
-        try:
+    try:
+        response = requests.post(API_URL, headers=headers, json=payload)
+        if response.status_code == 200:
             return response.json()['generated_text'].split("<|assistant|>\n")[-1]
-        except:
-            return "I couldn't process that response."
+    except Exception as e:
+        print("AI Brain error:", e)
     return "Sorry, my AI brain is a bit slow right now."
 
-# --- WHATSAPP OUTBOUND (WITH SENDER TAGS) ---
+# --- WHATSAPP OUTBOUND SENDER ---
 def send_whatsapp_message(chat_id, text, reply_to_id, sender_phone):
     id_instance, token_instance = WA_API_KEY.split('/')
     url = f"{WA_GATEWAY_URL}/waInstance{id_instance}/sendMessage/{token_instance}"
     
-    clean_sender = sender_phone.split('@')[0]
+    clean_sender = sender_phone.split('@')[0] if sender_phone else "User"
     formatted_text = f"🤖 *CCY AI Assistant* 🤖\n\n@{clean_sender}\n\n{text}"
     
     payload = {
@@ -50,32 +50,38 @@ def send_whatsapp_message(chat_id, text, reply_to_id, sender_phone):
 @app.route('/webhook', methods=['POST'])
 def whatsapp_webhook():
     data = request.json
-    
+    if not data:
+        return jsonify({"status": "empty_ignored"}), 200
+        
+    # Extra robust extraction for all variants of Green API payloads
     sender_data = data.get('senderData', {})
-    chat_id = sender_data.get('chatId') 
-    sender_phone = sender_data.get('sender', '')
+    chat_id = sender_data.get('chatId') or data.get('chatId')
+    sender_phone = sender_data.get('sender') or data.get('sender', '')
     
     message_data = data.get('messageData', {})
-    text_data = message_data.get('textMessageData', {})
-    text = text_data.get('textMessage', '').strip()
+    text_data = message_data.get('textMessageData', {}) or message_data.get('extendedTextMessageData', {})
+    
+    text = text_data.get('textMessage', '') or text_data.get('text', '') or ''
+    text = text.strip()
+    
     message_id = data.get('idMessage')
 
     if not text or not chat_id:
-        return jsonify({"status": "ignored"}), 200
+        return jsonify({"status": "missing_data_ignored"}), 200
 
-    # 1. Image Generation
+    # 1. Handle Drawing AI Command
     if text.startswith('/draw '):
         prompt = text.replace('/draw ', '')
         send_whatsapp_message(chat_id, f"🎨 Processing your drawing prompt: '{prompt}'...", message_id, sender_phone)
 
-    # 2. AI Question Answering
+    # 2. Handle Text AI Command
     elif text.startswith('/ccyai ') or text.startswith('/ccy '):
         question = text.replace('/ccyai ', '') if text.startswith('/ccyai ') else text.replace('/ccy ', '')
         ai_reply = ask_ai(question)
         send_whatsapp_message(chat_id, ai_reply, message_id, sender_phone)
 
     else:
-        return jsonify({"status": "ignored"}), 200
+        return jsonify({"status": "not_a_command_ignored"}), 200
 
     return jsonify({"status": "success"}), 200
 
