@@ -4,12 +4,12 @@ from flask import Flask, request, jsonify
 
 app = Flask(__name__)
 
-# --- CONFIGURATION (Set these in your cloud environment) ---
+# --- CONFIGURATION (Set these in your Render Environment Variables) ---
 HF_TOKEN = os.getenv("HUGGINGFACE_TOKEN", "YOUR_HUGGINGFACE_TOKEN_HERE") 
-WA_GATEWAY_URL = os.getenv("WA_GATEWAY_URL", "YOUR_GATEWAY_URL_HERE")
-WA_API_KEY = os.getenv("WA_API_KEY", "YOUR_API_KEY_HERE")
+WA_GATEWAY_URL = os.getenv("WA_GATEWAY_URL", "https://green-api.com")
+WA_API_KEY = os.getenv("WA_API_KEY", "YOUR_ID_AND_TOKEN_HERE")
 
-# --- AI IMAGE GENERATION (/draw) ---
+# --- AI DRAWING MODULE ---
 def generate_image(prompt):
     API_URL = "https://huggingface.co"
     headers = {"Authorization": f"Bearer {HF_TOKEN}"}
@@ -18,7 +18,7 @@ def generate_image(prompt):
         return response.content
     return None
 
-# --- AI QUESTION ANSWERING (Chat via /ccyai or /ccy) ---
+# --- AI CHAT MODULE ---
 def ask_ai(question):
     API_URL = "https://huggingface.co"
     headers = {"Authorization": f"Bearer {HF_TOKEN}"}
@@ -31,71 +31,49 @@ def ask_ai(question):
             return "I couldn't process that response."
     return "Sorry, my AI brain is a bit slow right now."
 
-# --- MUSIC SCRAPER SYSTEM (/music) ---
-def fetch_music_audio(song_query):
-    search_url = f"https://deezer.com{song_query}"
-    try:
-        res = requests.get(search_url).json()
-        if res.get('data'):
-            return res['data']['preview']
-    except Exception as e:
-        print("Music search error:", e)
-    return None
-
-# --- WHATSAPP GATEWAY OUTBOUND HITS ---
-def send_whatsapp_message(chat_id, text, reply_to_id):
-    url = f"{WA_GATEWAY_URL}/messages/send"
-    payload = {"chatId": chat_id, "text": text, "replyMessageId": reply_to_id}
-    headers = {"Authorization": f"Bearer {WA_API_KEY}", "Content-Type": "application/json"}
-    requests.post(url, json=payload, headers=headers)
-
-def send_whatsapp_audio(chat_id, audio_url, reply_to_id):
-    url = f"{WA_GATEWAY_URL}/messages/send-audio"
-    payload = {"chatId": chat_id, "audioUrl": audio_url, "isVoiceNote": True, "replyMessageId": reply_to_id}
-    headers = {"Authorization": f"Bearer {WA_API_KEY}", "Content-Type": "application/json"}
-    requests.post(url, json=payload, headers=headers)
+# --- WHATSAPP OUTBOUND (WITH SENDER TAGS) ---
+def send_whatsapp_message(chat_id, text, reply_to_id, sender_phone):
+    id_instance, token_instance = WA_API_KEY.split('/')
+    url = f"{WA_GATEWAY_URL}/waInstance{id_instance}/sendMessage/{token_instance}"
+    
+    clean_sender = sender_phone.split('@')[0]
+    formatted_text = f"🤖 *CCY AI Assistant* 🤖\n\n@{clean_sender}\n\n{text}"
+    
+    payload = {
+        "chatId": chat_id, 
+        "message": formatted_text, 
+        "quotedMessageId": reply_to_id
+    }
+    requests.post(url, json=payload)
 
 # --- WEBHOOK INTERCEPTOR ---
 @app.route('/webhook', methods=['POST'])
 def whatsapp_webhook():
     data = request.json
     
-    message = data.get('message', {})
-    text = message.get('text', '').strip()
-    chat_id = data.get('chatId')
-    message_id = message.get('id')
+    sender_data = data.get('senderData', {})
+    chat_id = sender_data.get('chatId') 
+    sender_phone = sender_data.get('sender', '')
     
+    message_data = data.get('messageData', {})
+    text_data = message_data.get('textMessageData', {})
+    text = text_data.get('textMessage', '').strip()
+    message_id = data.get('idMessage')
+
     if not text or not chat_id:
         return jsonify({"status": "ignored"}), 200
 
-    # 1. Handle Image Command
+    # 1. Image Generation
     if text.startswith('/draw '):
         prompt = text.replace('/draw ', '')
-        send_whatsapp_message(chat_id, "🎨 Generating your art, please wait...", message_id)
-        send_whatsapp_message(chat_id, f"✅ Image generation triggered for: '{prompt}'", message_id)
+        send_whatsapp_message(chat_id, f"🎨 Processing your drawing prompt: '{prompt}'...", message_id, sender_phone)
 
-    # 2. Handle Music Command
-    elif text.startswith('/music '):
-        song_query = text.replace('/music ', '')
-        send_whatsapp_message(chat_id, f"🎵 Searching for '{song_query}' and converting to voice note...", message_id)
-        audio_link = fetch_music_audio(song_query)
-        if audio_link:
-            send_whatsapp_audio(chat_id, audio_link, message_id)
-        else:
-            send_whatsapp_message(chat_id, "❌ Sorry, I couldn't find that song.", message_id)
-
-    # 3. Handle AI Chat Commands (/ccyai or /ccy)
+    # 2. AI Question Answering
     elif text.startswith('/ccyai ') or text.startswith('/ccy '):
-        # Strip away the command prefixes to grab just the actual question
-        if text.startswith('/ccyai '):
-            question = text.replace('/ccyai ', '')
-        else:
-            question = text.replace('/ccy ', '')
-            
+        question = text.replace('/ccyai ', '') if text.startswith('/ccyai ') else text.replace('/ccy ', '')
         ai_reply = ask_ai(question)
-        send_whatsapp_message(chat_id, ai_reply, message_id)
+        send_whatsapp_message(chat_id, ai_reply, message_id, sender_phone)
 
-    # If it is a normal text message without any command prefix, the bot completely ignores it
     else:
         return jsonify({"status": "ignored"}), 200
 
@@ -103,4 +81,4 @@ def whatsapp_webhook():
 
 if __name__ == '__main__':
     app.run(host='0.0.0.0', port=int(os.environ.get("PORT", 5000)))
-  
+    
