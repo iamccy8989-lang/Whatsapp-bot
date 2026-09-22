@@ -1,4 +1,4 @@
- import os
+import os
 import requests
 from flask import Flask, request, jsonify
 
@@ -37,7 +37,6 @@ def fetch_music_audio(song_query):
     try:
         res = requests.get(search_url).json()
         if res.get('data') and len(res['data']) > 0:
-            # Grabs the first matching song track result structure safely
             track = res['data'][0]
             title = track.get('title', 'Unknown Title')
             artist = track.get('artist', {}).get('name', 'Unknown Artist')
@@ -51,7 +50,7 @@ def fetch_music_audio(song_query):
 def send_whatsapp_message(chat_id, text, reply_to_id, sender_phone):
     id_instance, token_instance = WA_API_KEY.split('/')
     url = f"{WA_GATEWAY_URL}/waInstance{id_instance}/sendMessage/{token_instance}"
-    clean_sender = sender_phone.split('@') if sender_phone else "User"
+    clean_sender = sender_phone.split('@')[0] if sender_phone else "User"
     formatted_text = f"🤖 *CCY AI Assistant* 🤖\n\n@{clean_sender}\n\n{text}"
     payload = {"chatId": chat_id, "message": formatted_text, "quotedMessageId": reply_to_id}
     requests.post(url, json=payload)
@@ -65,7 +64,6 @@ def send_whatsapp_audio(chat_id, audio_url, reply_to_id):
 # --- MASTER INTERCEPTOR (ROOT ROUTE FOR GREEN API) ---
 @app.route('/', methods=['GET', 'POST', 'HEAD'])
 def whatsapp_webhook():
-    # Handle empty health checks from browsers or Green API saving tools gracefully
     if request.method in ['GET', 'HEAD']:
         return jsonify({"status": "healthy", "message": "CCY Bot Server is Awake"}), 200
 
@@ -85,7 +83,6 @@ def whatsapp_webhook():
     text = text.strip()
     message_id = data.get('idMessage')
 
-    # Self-messaging mapping
     if type_webhook == 'outgoingMessageReceived':
         text = data.get('messageData', {}).get('textMessageData', {}).get('textMessage', '').strip()
         if not chat_id:
@@ -100,6 +97,15 @@ def whatsapp_webhook():
     if text.startswith('/draw '):
         prompt = text.replace('/draw ', '')
         send_whatsapp_message(chat_id, f"🎨 Processing your drawing prompt: '{prompt}'...", message_id, sender_phone)
+        img_data = generate_image(prompt)
+        if img_data:
+            id_instance, token_instance = WA_API_KEY.split('/')
+            url = f"{WA_GATEWAY_URL}/waInstance{id_instance}/sendFileByUpload/{token_instance}"
+            files = {'file': ('image.jpg', img_data, 'image/jpeg')}
+            payload = {'chatId': chat_id, 'fileName': 'image.jpg', 'quotedMessageId': message_id}
+            requests.post(url, data=payload, files=files)
+        else:
+            send_whatsapp_message(chat_id, "❌ Sorry, I couldn't generate that image.", message_id, sender_phone)
 
     # 2. Live Music Playback Command (/play) 🎵
     elif text.startswith('/play '):
@@ -126,4 +132,4 @@ def whatsapp_webhook():
 
 if __name__ == '__main__':
     app.run(host='0.0.0.0', port=int(os.environ.get("PORT", 5000)))
-    
+ 
