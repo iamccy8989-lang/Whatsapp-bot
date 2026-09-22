@@ -31,31 +31,47 @@ def ask_ai(question):
         print("AI Brain error:", e)
     return "Sorry, my AI brain is a bit slow right now."
 
-# --- WHATSAPP OUTBOUND SENDER ---
+# --- 🎵 MUSIC SEARCH SYSTEM ---
+def fetch_music_audio(song_query):
+    search_url = f"https://deezer.com{song_query}"
+    try:
+        res = requests.get(search_url).json()
+        if res.get('data') and len(res['data']) > 0:
+            # Grabs the first matching song track result structure
+            track = res['data'][0]
+            title = track.get('title', 'Unknown Title')
+            artist = track.get('artist', {}).get('name', 'Unknown Artist')
+            audio_url = track.get('preview')
+            return audio_url, title, artist
+    except Exception as e:
+        print("Music engine search error:", e)
+    return None, None, None
+
+# --- WHATSAPP OUTBOUND DATA SENDERS ---
 def send_whatsapp_message(chat_id, text, reply_to_id, sender_phone):
     id_instance, token_instance = WA_API_KEY.split('/')
     url = f"{WA_GATEWAY_URL}/waInstance{id_instance}/sendMessage/{token_instance}"
-    
-    clean_sender = sender_phone.split('@')[0] if sender_phone else "User"
+    clean_sender = sender_phone.split('@') if sender_phone else "User"
     formatted_text = f"🤖 *CCY AI Assistant* 🤖\n\n@{clean_sender}\n\n{text}"
-    
-    payload = {
-        "chatId": chat_id, 
-        "message": formatted_text, 
-        "quotedMessageId": reply_to_id
-    }
+    payload = {"chatId": chat_id, "message": formatted_text, "quotedMessageId": reply_to_id}
     requests.post(url, json=payload)
 
-# --- WEBHOOK INTERCEPTOR ---
-@app.route('/webhook', methods=['POST'])
+def send_whatsapp_audio(chat_id, audio_url, reply_to_id):
+    id_instance, token_instance = WA_API_KEY.split('/')
+    url = f"{WA_GATEWAY_URL}/waInstance{id_instance}/sendAudio/{token_instance}"
+    payload = {"chatId": chat_id, "audioUrl": audio_url, "quotedMessageId": reply_to_id}
+    requests.post(url, json=payload)
+
+# --- MASTER INTERCEPTOR (ROOT ROUTE FOR GREEN API) ---
+@app.route('/', methods=['POST'])
 def whatsapp_webhook():
     data = request.json
     if not data:
         return jsonify({"status": "empty_ignored"}), 200
         
-    # Extra robust extraction for all variants of Green API payloads
+    type_webhook = data.get('typeWebhook', '')
     sender_data = data.get('senderData', {})
-    chat_id = sender_data.get('chatId') or data.get('chatId')
+    chat_id = data.get('chatId') or sender_data.get('chatId')
     sender_phone = sender_data.get('sender') or data.get('sender', '')
     
     message_data = data.get('messageData', {})
@@ -63,18 +79,38 @@ def whatsapp_webhook():
     
     text = text_data.get('textMessage', '') or text_data.get('text', '') or ''
     text = text.strip()
-    
     message_id = data.get('idMessage')
 
-    if not text or not chat_id:
-        return jsonify({"status": "missing_data_ignored"}), 200
+    # Self-messaging logic compatibility block
+    if type_webhook == 'outgoingMessageReceived':
+        text = data.get('messageData', {}).get('textMessageData', {}).get('textMessage', '').strip()
+        if not chat_id:
+            chat_id = data.get('chatId')
+        if not sender_phone:
+            sender_phone = chat_id
 
-    # 1. Handle Drawing AI Command
+    if not text or not chat_id:
+        return jsonify({"status": "missing_text_or_chat_ignored"}), 200
+
+    # 1. Image Generation Command (/draw)
     if text.startswith('/draw '):
         prompt = text.replace('/draw ', '')
         send_whatsapp_message(chat_id, f"🎨 Processing your drawing prompt: '{prompt}'...", message_id, sender_phone)
 
-    # 2. Handle Text AI Command
+    # 2. Live Music Playback Command (/play) 🎵
+    elif text.startswith('/play '):
+        song_query = text.replace('/play ', '')
+        send_whatsapp_message(chat_id, f"🔍 Searching database for: '{song_query}'...", message_id, sender_phone)
+        
+        audio_link, song_title, artist_name = fetch_music_audio(song_query)
+        if audio_link:
+            # Let the chat know exactly what track was matched
+            send_whatsapp_message(chat_id, f"🎵 Found: *{song_title}* by _{artist_name}_\n📦 Sending playable audio file now...", message_id, sender_phone)
+            send_whatsapp_audio(chat_id, audio_link, message_id)
+        else:
+            send_whatsapp_message(chat_id, f"❌ Sorry, I couldn't find any audio matches for '{song_query}'.", message_id, sender_phone)
+
+    # 3. AI Chat Question Command (/ccyai or /ccy)
     elif text.startswith('/ccyai ') or text.startswith('/ccy '):
         question = text.replace('/ccyai ', '') if text.startswith('/ccyai ') else text.replace('/ccy ', '')
         ai_reply = ask_ai(question)
