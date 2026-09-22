@@ -1,4 +1,4 @@
-import os
+ import os
 import requests
 from flask import Flask, request, jsonify
 
@@ -37,7 +37,7 @@ def fetch_music_audio(song_query):
     try:
         res = requests.get(search_url).json()
         if res.get('data') and len(res['data']) > 0:
-            # Grabs the first matching song track result structure
+            # Grabs the first matching song track result structure safely
             track = res['data'][0]
             title = track.get('title', 'Unknown Title')
             artist = track.get('artist', {}).get('name', 'Unknown Artist')
@@ -63,8 +63,12 @@ def send_whatsapp_audio(chat_id, audio_url, reply_to_id):
     requests.post(url, json=payload)
 
 # --- MASTER INTERCEPTOR (ROOT ROUTE FOR GREEN API) ---
-@app.route('/', methods=['POST'])
+@app.route('/', methods=['GET', 'POST', 'HEAD'])
 def whatsapp_webhook():
+    # Handle empty health checks from browsers or Green API saving tools gracefully
+    if request.method in ['GET', 'HEAD']:
+        return jsonify({"status": "healthy", "message": "CCY Bot Server is Awake"}), 200
+
     data = request.json
     if not data:
         return jsonify({"status": "empty_ignored"}), 200
@@ -81,7 +85,7 @@ def whatsapp_webhook():
     text = text.strip()
     message_id = data.get('idMessage')
 
-    # Self-messaging logic compatibility block
+    # Self-messaging mapping
     if type_webhook == 'outgoingMessageReceived':
         text = data.get('messageData', {}).get('textMessageData', {}).get('textMessage', '').strip()
         if not chat_id:
@@ -104,7 +108,6 @@ def whatsapp_webhook():
         
         audio_link, song_title, artist_name = fetch_music_audio(song_query)
         if audio_link:
-            # Let the chat know exactly what track was matched
             send_whatsapp_message(chat_id, f"🎵 Found: *{song_title}* by _{artist_name}_\n📦 Sending playable audio file now...", message_id, sender_phone)
             send_whatsapp_audio(chat_id, audio_link, message_id)
         else:
